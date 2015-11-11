@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"image/color"
 	"log"
 	"math"
 	"math/rand"
@@ -12,9 +13,10 @@ import (
 
 	"github.com/goml/gobrain"
 	"github.com/gonum/plot"
-	"github.com/gonum/plot/plotter"
+	//"github.com/gonum/plot/plotter"
 	"github.com/gonum/plot/vg"
 	"github.com/gonum/plot/vg/draw"
+	"github.com/pointlander/kmeans"
 	"github.com/skelterjohn/go.matrix"
 )
 
@@ -129,7 +131,7 @@ func cov(x *matrix.DenseMatrix) *matrix.DenseMatrix {
 }
 
 func PCA(m *matrix.DenseMatrix, size int) *matrix.DenseMatrix {
-	norm(m)
+	//norm(m)
 	subtract(m, mean(m))
 	var v *matrix.DenseMatrix
 	{
@@ -150,6 +152,56 @@ func PCA(m *matrix.DenseMatrix, size int) *matrix.DenseMatrix {
 		log.Fatal(err)
 	}
 	return r
+}
+
+type CPoint struct {
+	X, Y float64
+	C    int
+}
+
+type CPoints struct {
+	CPoints []CPoint
+}
+
+func (cp *CPoints) Plot(c draw.Canvas, plt *plot.Plot) {
+	trX, trY := plt.Transforms(&c)
+	for _, point := range cp.CPoints {
+		x := trX(point.X)
+		y := trY(point.Y)
+
+		var p vg.Path
+		p.Move(x+1, y)
+		p.Arc(x, y, 1, 0, 2*math.Pi)
+		p.Close()
+		switch point.C {
+		case 0:
+			c.SetColor(color.RGBA{0, 255, 0, 255})
+		case 1:
+			c.SetColor(color.RGBA{255, 0, 0, 255})
+		case 2:
+			c.SetColor(color.RGBA{0, 0, 255, 255})
+		}
+		c.Fill(p)
+	}
+}
+
+func (cp *CPoints) DataRange() (xmin, xmax, ymin, ymax float64) {
+	xmin, xmax, ymin, ymax = math.MaxFloat64, 0, math.MaxFloat64, 0
+	for _, point := range cp.CPoints {
+		if point.X < xmin {
+			xmin = point.X
+		}
+		if point.X > xmax {
+			xmax = point.X
+		}
+		if point.Y < ymin {
+			ymin = point.Y
+		}
+		if point.Y > ymax {
+			ymax = point.Y
+		}
+	}
+	return
 }
 
 func main() {
@@ -245,11 +297,26 @@ func main() {
 	fmt.Println(prices[i-1].t)
 	train(prices[i-1].t.Year(), patterns)
 
-	r := PCA(model, 2)
-	rows := r.Rows()
-	points := make(plotter.XYs, rows)
+	//norm(model)
+	rows, cols := model.Rows(), model.Cols()
+	rawData := make([][]float64, rows)
 	for i := 0; i < rows; i++ {
-		points[i].X, points[i].Y = r.Get(i, 0), r.Get(i, 1)
+		rawData[i] = make([]float64, cols)
+		for j := 0; j < cols; j++ {
+			rawData[i][j] = model.Get(i, j)
+		}
+	}
+	labels, _, err := kmeans.Kmeans(rawData, 3, kmeans.CanberraDistance, 10)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	r := PCA(model.Copy(), 2)
+	rows = r.Rows()
+	points := make([]CPoint, rows)
+	for i := 0; i < rows; i++ {
+		points[i].X, points[i].Y, points[i].C =
+			r.Get(i, 0), r.Get(i, 1), labels[i]
 	}
 
 	p, err := plot.New()
@@ -259,14 +326,34 @@ func main() {
 	p.Title.Text = "Market Dynamics"
 	p.X.Label.Text = "X"
 	p.Y.Label.Text = "Y"
-	scatter, err := plotter.NewScatter(points)
+	p.Add(&CPoints{points})
+	if err := p.Save(512, 512, "market_dynamics.png"); err != nil {
+		log.Fatal(err)
+	}
+
+	ticks := []plot.Tick{}
+	for _, price := range prices {
+		if price.t.Year()%2 == 0 && price.t.YearDay() == 1 {
+			ticks = append(ticks, plot.Tick{float64(price.t.Unix()), fmt.Sprintf("%v", price.t.Year())})
+		}
+	}
+
+	cpoints := make([]CPoint, len(prices))
+	for i, price := range prices {
+		cpoints[i].X, cpoints[i].Y, cpoints[i].C =
+			float64(price.t.Unix()), price.price, labels[price.t.Year()-minYear]
+	}
+
+	p, err = plot.New()
 	if err != nil {
 		log.Fatal(err)
 	}
-	scatter.Shape = draw.CircleGlyph{}
-	scatter.Radius = vg.Points(1)
-	p.Add(scatter)
-	if err := p.Save(512, 512, "market_dynamics.png"); err != nil {
+	p.Title.Text = "DJIA"
+	p.X.Label.Text = "Time"
+	p.Y.Label.Text = "Price"
+	p.X.Tick.Marker = plot.ConstantTicks(ticks)
+	p.Add(&CPoints{cpoints})
+	if err := p.Save(2048, 2048, "market_prices.png"); err != nil {
 		log.Fatal(err)
 	}
 }
