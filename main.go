@@ -157,6 +157,7 @@ func PCA(m *matrix.DenseMatrix, size int) *matrix.DenseMatrix {
 type CPoint struct {
 	X, Y float64
 	C    int
+	R, B byte
 }
 
 type CPoints struct {
@@ -173,13 +174,17 @@ func (cp *CPoints) Plot(c draw.Canvas, plt *plot.Plot) {
 		p.Move(x+1, y)
 		p.Arc(x, y, 1, 0, 2*math.Pi)
 		p.Close()
-		switch point.C {
-		case 0:
-			c.SetColor(color.RGBA{0, 255, 0, 255})
-		case 1:
-			c.SetColor(color.RGBA{255, 0, 0, 255})
-		case 2:
-			c.SetColor(color.RGBA{0, 0, 255, 255})
+		if point.C < 0 {
+			c.SetColor(color.RGBA{0, point.R, point.B, 255})
+		} else {
+			switch point.C {
+			case 0:
+				c.SetColor(color.RGBA{0, 255, 0, 255})
+			case 1:
+				c.SetColor(color.RGBA{255, 0, 0, 255})
+			case 2:
+				c.SetColor(color.RGBA{0, 0, 255, 255})
+			}
 		}
 		c.Fill(p)
 	}
@@ -276,20 +281,20 @@ func main() {
 		}
 	}
 	patterns, i := [][][]float64{}, 0
-	for i+3*7+1 < size {
-		if prices[i].t.Year() != prices[i+3*7+1].t.Year() {
+	for i+3*7 < size {
+		if prices[i].t.Year() != prices[i+3*7].t.Year() {
 			fmt.Println(prices[i].t)
 			train(prices[i].t.Year(), patterns)
 			patterns = [][][]float64{}
-			i += 3*7 + 1
-			if i+3*7+1 >= size {
+			i += 3 * 7
+			if i+3*7 >= size {
 				break
 			}
 		}
 		in, out := make([]float64, 4), make([]float64, 4)
 		for j := 0; j < 4; j++ {
 			in[j] = prices[i+j*7].price
-			out[j] = prices[i+j*7+1].price
+			out[j] = prices[i+j*7].price
 		}
 		patterns = append(patterns, [][]float64{in, out})
 		i++
@@ -318,6 +323,7 @@ func main() {
 		points[i].X, points[i].Y, points[i].C =
 			r.Get(i, 0), r.Get(i, 1), labels[i]
 	}
+	marketDynamics := &CPoints{points}
 
 	p, err := plot.New()
 	if err != nil {
@@ -326,7 +332,7 @@ func main() {
 	p.Title.Text = "Market Dynamics"
 	p.X.Label.Text = "X"
 	p.Y.Label.Text = "Y"
-	p.Add(&CPoints{points})
+	p.Add(marketDynamics)
 	if err := p.Save(512, 512, "market_dynamics.png"); err != nil {
 		log.Fatal(err)
 	}
@@ -341,7 +347,14 @@ func main() {
 	cpoints := make([]CPoint, len(prices))
 	for i, price := range prices {
 		cpoints[i].X, cpoints[i].Y, cpoints[i].C =
-			float64(price.t.Unix()), price.price, labels[price.t.Year()-minYear]
+			float64(price.t.Unix()), price.price, -1 //labels[price.t.Year()-minYear]
+	}
+	marketPrices := &CPoints{cpoints}
+	xmin, xmax, ymin, ymax := marketDynamics.DataRange()
+	for i, price := range prices {
+		point := points[price.t.Year()-minYear]
+		cpoints[i].R = byte(255 * (point.X - xmin) / (xmax - xmin))
+		cpoints[i].B = byte(255 * (point.Y - ymin) / (ymax - ymin))
 	}
 
 	p, err = plot.New()
@@ -352,8 +365,27 @@ func main() {
 	p.X.Label.Text = "Time"
 	p.Y.Label.Text = "Price"
 	p.X.Tick.Marker = plot.ConstantTicks(ticks)
-	p.Add(&CPoints{cpoints})
+	p.Add(marketPrices)
 	if err := p.Save(2048, 2048, "market_prices.png"); err != nil {
 		log.Fatal(err)
+	}
+
+	var markov [3][3]int
+	last := 0
+	for _, label := range labels {
+		markov[last][label]++
+		last = label
+	}
+	colors := [...]string{"Green", "Red", "Blue"}
+	for j, a := range markov {
+		sum := 0.0
+		for _, b := range a {
+			sum += float64(b)
+		}
+		fmt.Println(colors[j])
+		for i, b := range a {
+			fmt.Printf("%.1f %v\n", 100*float64(b)/sum, colors[i])
+		}
+		fmt.Printf("\n")
 	}
 }
