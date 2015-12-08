@@ -26,6 +26,25 @@ const (
 	MODEL_WIDTH   = (NEURAL_WIDTH+1)*(NEURAL_MIDDLE+1) + (NEURAL_MIDDLE+1)*NEURAL_WIDTH
 )
 
+type Vector [MODEL_WIDTH]float64
+
+/* https://en.wikipedia.org/wiki/Cosine_similarity */
+func (a *Vector) similarity(b *Vector) float64 {
+	cols := len(a)
+	dot, maga, magb := float64(0), float64(0), float64(0)
+	for j := 0; j < cols; j++ {
+		aij, bij := a[j], b[j]
+		dot += aij * bij
+		maga += aij * aij
+		magb += bij * bij
+	}
+	mag := math.Sqrt(maga * magb)
+	if mag == 0 {
+		return 0
+	}
+	return dot / mag
+}
+
 func convert(item []string) (time.Time, float64) {
 	t, err := time.Parse("2006-01-02", item[0])
 	if err != nil {
@@ -130,6 +149,7 @@ func cov(x *matrix.DenseMatrix) *matrix.DenseMatrix {
 	return z
 }
 
+/* http://nghiaho.com/?page_id=1030 */
 func PCA(m *matrix.DenseMatrix, size int) *matrix.DenseMatrix {
 	//norm(m)
 	subtract(m, mean(m))
@@ -162,11 +182,13 @@ type CPoint struct {
 
 type CPoints struct {
 	CPoints []CPoint
+	line    bool
 }
 
 func (cp *CPoints) Plot(c draw.Canvas, plt *plot.Plot) {
 	trX, trY := plt.Transforms(&c)
-	for _, point := range cp.CPoints {
+	var lastX, lastY vg.Length
+	for i, point := range cp.CPoints {
 		x := trX(point.X)
 		y := trY(point.Y)
 
@@ -187,6 +209,13 @@ func (cp *CPoints) Plot(c draw.Canvas, plt *plot.Plot) {
 			}
 		}
 		c.Fill(p)
+		if cp.line && i > 0 {
+			var p vg.Path
+			p.Move(lastX, lastY)
+			p.Line(x, y)
+			c.Stroke(p)
+		}
+		lastX, lastY = x, y
 	}
 }
 
@@ -323,7 +352,7 @@ func main() {
 		points[i].X, points[i].Y, points[i].C =
 			r.Get(i, 0), r.Get(i, 1), labels[i]
 	}
-	marketDynamics := &CPoints{points}
+	marketDynamics := &CPoints{points, false}
 
 	p, err := plot.New()
 	if err != nil {
@@ -349,7 +378,7 @@ func main() {
 		cpoints[i].X, cpoints[i].Y, cpoints[i].C =
 			float64(price.t.Unix()), price.price, -1 //labels[price.t.Year()-minYear]
 	}
-	marketPrices := &CPoints{cpoints}
+	marketPrices := &CPoints{cpoints, false}
 	xmin, xmax, ymin, ymax := marketDynamics.DataRange()
 	for i, price := range prices {
 		point := points[price.t.Year()-minYear]
@@ -387,5 +416,36 @@ func main() {
 			fmt.Printf("%.1f %v\n", 100*float64(b)/sum, colors[i])
 		}
 		fmt.Printf("\n")
+	}
+
+	rows, cols = model.Rows(), model.Cols()
+	angles := make([]float64, rows)
+	for i := 1; i < rows; i++ {
+		a, b := &Vector{}, &Vector{}
+		for j := 0; j < cols; j++ {
+			a[j], b[j] = model.Get(i, j), model.Get(i-1, j)
+		}
+		angles[i] = a.similarity(b)
+	}
+
+	points = make([]CPoint, rows)
+	for i := 0; i < rows; i++ {
+		unix := time.Date(minYear+i, time.January, 0, 0, 0, 0, 0, time.UTC).Unix()
+		points[i].X, points[i].Y, points[i].C =
+			float64(unix), angles[i], labels[i]
+	}
+	marketSimilarity := &CPoints{points, true}
+
+	p, err = plot.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p.Title.Text = "Market Similarity"
+	p.X.Label.Text = "Time"
+	p.Y.Label.Text = "Similarity"
+	p.X.Tick.Marker = plot.ConstantTicks(ticks)
+	p.Add(marketSimilarity)
+	if err := p.Save(2048, 2048, "market_similarity.png"); err != nil {
+		log.Fatal(err)
 	}
 }
