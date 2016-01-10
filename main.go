@@ -29,7 +29,6 @@ const (
 	MODEL_WIDTH   = (NEURAL_WIDTH+1)*(NEURAL_MIDDLE+1) + (NEURAL_MIDDLE+1)*NEURAL_WIDTH
 	NMF_WIDTH     = 2
 	SAMPLES       = 4
-	LAST_SAMPLE   = SAMPLES - 1
 )
 
 type Vectorizer struct {
@@ -249,30 +248,34 @@ func (cp *CPoints) DataRange() (xmin, xmax, ymin, ymax float64) {
 	return
 }
 
-func yearIterator(prices []Quote, iterate func(year int, patterns [][][]float64)) {
+func yearIterator(prices []Quote, samples int, norm bool, iterate func(year int, patterns [][][]float64)) {
 	patterns, i, size, min, max := [][][]float64{}, 0, len(prices), math.MaxFloat64, float64(0)
-	normalize := func() {
-		diff := max - min
-		for _, pattern := range patterns {
-			for _, a := range pattern {
-				for b, _ := range a {
-					a[b] = (a[b] - min) / diff
+	normalize := func() {}
+	if norm {
+		normalize = func() {
+			diff := max - min
+			for _, pattern := range patterns {
+				for _, a := range pattern {
+					for b, _ := range a {
+						a[b] = (a[b] - min) / diff
+					}
 				}
 			}
 		}
 	}
-	for i+3*7 < size {
-		if prices[i].t.Year() != prices[i+3*7].t.Year() {
+	last := samples - 1
+	for i+last*7 < size {
+		if prices[i].t.Year() != prices[i+last*7].t.Year() {
 			normalize()
 			iterate(prices[i].t.Year(), patterns)
 			patterns, min, max = [][][]float64{}, math.MaxFloat64, float64(0)
-			i += 3 * 7
-			if i+3*7 >= size {
+			i += last * 7
+			if i+last*7 >= size {
 				break
 			}
 		}
-		in, out := make([]float64, 4), make([]float64, 4)
-		for j := 0; j < 4; j++ {
+		in, out := make([]float64, samples), make([]float64, samples)
+		for j := 0; j < samples; j++ {
 			price := prices[i+j*7].price
 			if price < min {
 				min = price
@@ -296,7 +299,7 @@ func rnnVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	iterate := func(year int, patterns [][][]float64) {
 		maxYear = year
 	}
-	yearIterator(prices, iterate)
+	yearIterator(prices, 4, false, iterate)
 
 	model := matrix.Zeros(maxYear-minYear+1, MODEL_WIDTH)
 	iterate = func(year int, patterns [][][]float64) {
@@ -320,7 +323,7 @@ func rnnVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 			}
 		}
 	}
-	yearIterator(prices, iterate)
+	yearIterator(prices, 4, true, iterate)
 
 	return model
 }
@@ -329,7 +332,7 @@ func rnniVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	iterate := func(year int, patterns [][][]float64) {
 		maxYear = year
 	}
-	yearIterator(prices, iterate)
+	yearIterator(prices, 4, false, iterate)
 
 	model := matrix.Zeros(maxYear-minYear+1, maxYear-minYear+1)
 	iterate = func(year int, patterns [][][]float64) {
@@ -351,9 +354,9 @@ func rnniVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 			}
 			model.Set(year-minYear, y-minYear, err/float64(len(patterns)))
 		}
-		yearIterator(prices, iterate)
+		yearIterator(prices, 4, true, iterate)
 	}
-	yearIterator(prices, iterate)
+	yearIterator(prices, 4, true, iterate)
 
 	return model
 }
@@ -363,7 +366,12 @@ func posNorm(_, _ int, _ float64) float64 {
 }
 
 func nmfVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
-	model, size := matrix.Zeros(maxYear-minYear+1, SAMPLES*NMF_WIDTH), len(prices)
+	iterate := func(year int, patterns [][][]float64) {
+		maxYear = year
+	}
+	yearIterator(prices, SAMPLES, false, iterate)
+
+	model := matrix.Zeros(maxYear-minYear+1, SAMPLES*NMF_WIDTH)
 	conf := nmf.Config{
 		Tolerance:   1e-3,
 		MaxIter:     100,
@@ -371,7 +379,13 @@ func nmfVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 		MaxInnerSub: 20,
 		Limit:       30 * time.Minute,
 	}
-	factor := func(year int, data []float64) {
+	iterate = func(year int, patterns [][][]float64) {
+		fmt.Println(year)
+		data := []float64{}
+		for _, pattern := range patterns {
+			data = append(data, pattern[0]...)
+		}
+
 		cols, rows := SAMPLES, len(data)/SAMPLES
 		rand.Seed(1)
 		V := mat64.NewDense(rows, cols, data)
@@ -392,26 +406,8 @@ func nmfVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 			}
 		}
 	}
-	data, i := []float64{}, 0
-	for i+LAST_SAMPLE*7 < size {
-		if prices[i].t.Year() != prices[i+LAST_SAMPLE*7].t.Year() {
-			fmt.Println(prices[i].t)
-			factor(prices[i].t.Year(), data)
-			data = []float64{}
-			i += LAST_SAMPLE * 7
-			if i+LAST_SAMPLE*7 >= size {
-				break
-			}
-		}
-		for j := 0; j < SAMPLES; j++ {
-			data = append(data, prices[i+j*7].price)
-		}
-		i++
-	}
-	fmt.Println(prices[i-1].t)
-	if len(data) > 0 {
-		factor(prices[i-1].t.Year(), data)
-	}
+	yearIterator(prices, SAMPLES, false, iterate)
+
 	return model
 }
 
