@@ -248,7 +248,8 @@ func (cp *CPoints) DataRange() (xmin, xmax, ymin, ymax float64) {
 	return
 }
 
-func yearIterator(prices []Quote, samples int, norm bool, iterate func(year int, patterns [][][]float64)) {
+//https://en.wikipedia.org/wiki/Takens%27_theorem
+func takensIterator(prices []Quote, samples int, norm bool, iterate func(year int, patterns [][][]float64)) {
 	patterns, i, size, min, max := [][][]float64{}, 0, len(prices), math.MaxFloat64, float64(0)
 	normalize := func() {}
 	if norm {
@@ -299,7 +300,7 @@ func rnnVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	iterate := func(year int, patterns [][][]float64) {
 		maxYear = year
 	}
-	yearIterator(prices, 4, false, iterate)
+	takensIterator(prices, 4, false, iterate)
 
 	model := matrix.Zeros(maxYear-minYear+1, MODEL_WIDTH)
 	iterate = func(year int, patterns [][][]float64) {
@@ -323,7 +324,7 @@ func rnnVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 			}
 		}
 	}
-	yearIterator(prices, 4, true, iterate)
+	takensIterator(prices, 4, true, iterate)
 
 	return model
 }
@@ -332,7 +333,7 @@ func rnniVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	iterate := func(year int, patterns [][][]float64) {
 		maxYear = year
 	}
-	yearIterator(prices, 4, false, iterate)
+	takensIterator(prices, 4, false, iterate)
 
 	model := matrix.Zeros(maxYear-minYear+1, maxYear-minYear+1)
 	iterate = func(year int, patterns [][][]float64) {
@@ -354,9 +355,9 @@ func rnniVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 			}
 			model.Set(year-minYear, y-minYear, err/float64(len(patterns)))
 		}
-		yearIterator(prices, 4, true, iterate)
+		takensIterator(prices, 4, true, iterate)
 	}
-	yearIterator(prices, 4, true, iterate)
+	takensIterator(prices, 4, true, iterate)
 
 	return model
 }
@@ -369,7 +370,7 @@ func nmfVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	iterate := func(year int, patterns [][][]float64) {
 		maxYear = year
 	}
-	yearIterator(prices, SAMPLES, false, iterate)
+	takensIterator(prices, SAMPLES, false, iterate)
 
 	model := matrix.Zeros(maxYear-minYear+1, SAMPLES*NMF_WIDTH)
 	conf := nmf.Config{
@@ -406,7 +407,7 @@ func nmfVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 			}
 		}
 	}
-	yearIterator(prices, SAMPLES, false, iterate)
+	takensIterator(prices, SAMPLES, false, iterate)
 
 	return model
 }
