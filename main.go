@@ -418,6 +418,82 @@ var vectorizers = []Vectorizer{
 	{"rnni", "recurrent neural network indirect", rnniVectorizer},
 }
 
+func (v *Vectorizer) graphMarketDynamics(pca *matrix.DenseMatrix, labels []int) *CPoints {
+	rows := pca.Rows()
+	points := make([]CPoint, rows)
+	for i := 0; i < rows; i++ {
+		points[i].X, points[i].Y, points[i].C = pca.Get(i, 0), pca.Get(i, 1), labels[i]
+	}
+	cpoints := &CPoints{points, false}
+
+	p, err := plot.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p.Title.Text = v.Name + " Market Dynamics"
+	p.X.Label.Text = "X"
+	p.Y.Label.Text = "Y"
+	p.Add(cpoints)
+	if err := p.Save(512, 512, v.Abbr+"_market_dynamics.png"); err != nil {
+		log.Fatal(err)
+	}
+
+	return cpoints
+}
+
+func (v *Vectorizer) graphMarketPrices(prices []Quote, minYear, maxYear int, dynamics *CPoints, ticks []plot.Tick) {
+	points := make([]CPoint, len(prices))
+	xmin, xmax, ymin, ymax := dynamics.DataRange()
+	for i, price := range prices {
+		points[i].X, points[i].Y, points[i].C = float64(price.t.Unix()), price.price, -1 //labels[price.t.Year()-minYear]
+		if index := price.t.Year() - minYear; index < len(dynamics.CPoints) {
+			point := dynamics.CPoints[index]
+			points[i].R = byte(255 * (point.X - xmin) / (xmax - xmin))
+			points[i].B = byte(255 * (point.Y - ymin) / (ymax - ymin))
+		} else {
+			points[i].R = 255
+		}
+	}
+
+	p, err := plot.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p.Title.Text = v.Name + " DJIA"
+	p.X.Label.Text = "Time"
+	p.Y.Label.Text = "Price"
+	p.X.Tick.Marker = plot.ConstantTicks(ticks)
+	p.Add(&CPoints{points, false})
+	if err := p.Save(2048, 2048, v.Abbr+"_market_prices.png"); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (v *Vectorizer) graphMarketSimilarity(model *matrix.DenseMatrix, minYear, maxYear int, labels []int, ticks []plot.Tick) {
+	rows, cols := model.Rows(), model.Cols()
+	points, a, b := make([]CPoint, rows), make(Vector, cols), make(Vector, cols)
+	for i := 0; i < rows; i++ {
+		for j := 0; i > 0 && j < cols; j++ {
+			a[j], b[j] = model.Get(i, j), model.Get(i-1, j)
+		}
+		unix := time.Date(minYear+i, time.January, 0, 0, 0, 0, 0, time.UTC).Unix()
+		points[i].X, points[i].Y, points[i].C = float64(unix), a.similarity(b), labels[i]
+	}
+
+	p, err := plot.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p.Title.Text = v.Name + " Market Similarity"
+	p.X.Label.Text = "Time"
+	p.Y.Label.Text = "Similarity"
+	p.X.Tick.Marker = plot.ConstantTicks(ticks)
+	p.Add(&CPoints{points, true})
+	if err := p.Save(2048, 2048, v.Abbr+"_market_similarity.png"); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func (v *Vectorizer) Graph(prices []Quote, minYear, maxYear int) {
 	model := v.Vectorize(prices, minYear, maxYear)
 	//norm(model)
@@ -434,26 +510,7 @@ func (v *Vectorizer) Graph(prices []Quote, minYear, maxYear int) {
 		log.Fatal(err)
 	}
 
-	r := PCA(model.Copy(), 2)
-	rows = r.Rows()
-	points := make([]CPoint, rows)
-	for i := 0; i < rows; i++ {
-		points[i].X, points[i].Y, points[i].C =
-			r.Get(i, 0), r.Get(i, 1), labels[i]
-	}
-	marketDynamics := &CPoints{points, false}
-
-	p, err := plot.New()
-	if err != nil {
-		log.Fatal(err)
-	}
-	p.Title.Text = v.Name + " Market Dynamics"
-	p.X.Label.Text = "X"
-	p.Y.Label.Text = "Y"
-	p.Add(marketDynamics)
-	if err := p.Save(512, 512, v.Abbr+"_market_dynamics.png"); err != nil {
-		log.Fatal(err)
-	}
+	pca := PCA(model.Copy(), 2)
 
 	ticks := []plot.Tick{}
 	for _, price := range prices {
@@ -462,36 +519,9 @@ func (v *Vectorizer) Graph(prices []Quote, minYear, maxYear int) {
 		}
 	}
 
-	cpoints := make([]CPoint, len(prices))
-	for i, price := range prices {
-		cpoints[i].X, cpoints[i].Y, cpoints[i].C =
-			float64(price.t.Unix()), price.price, -1 //labels[price.t.Year()-minYear]
-	}
-	marketPrices := &CPoints{cpoints, false}
-	xmin, xmax, ymin, ymax := marketDynamics.DataRange()
-	for i, price := range prices {
-		index := price.t.Year() - minYear
-		if index < len(points) {
-			point := points[index]
-			cpoints[i].R = byte(255 * (point.X - xmin) / (xmax - xmin))
-			cpoints[i].B = byte(255 * (point.Y - ymin) / (ymax - ymin))
-		} else {
-			cpoints[i].R = 255
-		}
-	}
-
-	p, err = plot.New()
-	if err != nil {
-		log.Fatal(err)
-	}
-	p.Title.Text = v.Name + " DJIA"
-	p.X.Label.Text = "Time"
-	p.Y.Label.Text = "Price"
-	p.X.Tick.Marker = plot.ConstantTicks(ticks)
-	p.Add(marketPrices)
-	if err := p.Save(2048, 2048, v.Abbr+"_market_prices.png"); err != nil {
-		log.Fatal(err)
-	}
+	dynamics := v.graphMarketDynamics(pca, labels)
+	v.graphMarketPrices(prices, minYear, maxYear, dynamics, ticks)
+	v.graphMarketSimilarity(model, minYear, maxYear, labels, ticks)
 
 	var markov [3][3]int
 	last := 0
@@ -510,37 +540,6 @@ func (v *Vectorizer) Graph(prices []Quote, minYear, maxYear int) {
 			fmt.Printf("%.1f %v\n", 100*float64(b)/sum, colors[i])
 		}
 		fmt.Printf("\n")
-	}
-
-	rows, cols = model.Rows(), model.Cols()
-	angles := make([]float64, rows)
-	for i := 1; i < rows; i++ {
-		a, b := make(Vector, cols), make(Vector, cols)
-		for j := 0; j < cols; j++ {
-			a[j], b[j] = model.Get(i, j), model.Get(i-1, j)
-		}
-		angles[i] = a.similarity(b)
-	}
-
-	points = make([]CPoint, rows)
-	for i := 0; i < rows; i++ {
-		unix := time.Date(minYear+i, time.January, 0, 0, 0, 0, 0, time.UTC).Unix()
-		points[i].X, points[i].Y, points[i].C =
-			float64(unix), angles[i], labels[i]
-	}
-	marketSimilarity := &CPoints{points, true}
-
-	p, err = plot.New()
-	if err != nil {
-		log.Fatal(err)
-	}
-	p.Title.Text = v.Name + " Market Similarity"
-	p.X.Label.Text = "Time"
-	p.Y.Label.Text = "Similarity"
-	p.X.Tick.Marker = plot.ConstantTicks(ticks)
-	p.Add(marketSimilarity)
-	if err := p.Save(2048, 2048, v.Abbr+"_market_similarity.png"); err != nil {
-		log.Fatal(err)
 	}
 }
 
