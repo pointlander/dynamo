@@ -296,6 +296,14 @@ func takensIterator(prices []Quote, samples int, norm bool, iterate func(year in
 	}
 }
 
+func reverseIterator(year int, patterns [][][]float64, iterate func(year int, patterns [][][]float64)) {
+	iterate(year, patterns)
+	for i, j := 0, len(patterns)-1; i < j; i, j = i+1, j-1 {
+		patterns[i], patterns[j] = patterns[j], patterns[i]
+	}
+	iterate(year, patterns)
+}
+
 func rnnVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	iterate := func(year int, patterns [][][]float64) {
 		maxYear = year
@@ -362,6 +370,42 @@ func rnniVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
 	return model
 }
 
+func rrnnVectorizer(prices []Quote, minYear, maxYear int) *matrix.DenseMatrix {
+	iterate := func(year int, patterns [][][]float64) {
+		maxYear = year
+	}
+	takensIterator(prices, 4, false, iterate)
+
+	model := matrix.Zeros(maxYear-minYear+1, MODEL_WIDTH)
+	iterate = func(year int, patterns [][][]float64) {
+		fmt.Println(year)
+		rand.Seed(1)
+		ff := &gobrain.FeedForward{}
+		ff.Init(NEURAL_WIDTH, NEURAL_MIDDLE, NEURAL_WIDTH)
+		iterate := func(year int, patterns [][][]float64) {
+			ff.SetContexts(7, nil)
+			ff.Train(patterns, 1, 0.6, 0.4, true)
+		}
+		reverseIterator(year, patterns, iterate)
+		i, j := year-minYear, 0
+		for _, weights := range ff.InputWeights {
+			for _, weight := range weights {
+				model.Set(i, j, weight)
+				j++
+			}
+		}
+		for _, weights := range ff.OutputWeights {
+			for _, weight := range weights {
+				model.Set(i, j, weight)
+				j++
+			}
+		}
+	}
+	takensIterator(prices, 4, true, iterate)
+
+	return model
+}
+
 func posNorm(_, _ int, _ float64) float64 {
 	return math.Abs(rand.NormFloat64())
 }
@@ -416,6 +460,7 @@ var vectorizers = []Vectorizer{
 	{"nmf", "non-negative matrix factorization", nmfVectorizer},
 	{"rnn", "recurrent neural network", rnnVectorizer},
 	{"rnni", "recurrent neural network indirect", rnniVectorizer},
+	{"rrnn", "reverse recurrent neural network", rrnnVectorizer},
 }
 
 func (v *Vectorizer) graphMarketDynamics(pca *matrix.DenseMatrix, labels []int) *CPoints {
