@@ -595,10 +595,13 @@ func GraphTruth(prices []Quote, minYear, maxYear int) {
 		maxYear = year
 	}
 	takensIterator(prices, 4, false, iterate)
-
+	maxYear -= 1
 	model := matrix.Zeros(maxYear-minYear+1, MODEL_WIDTH)
 	iterate = func(year int, patterns [][][]float64) {
 		fmt.Println(year)
+		if year == 2016 {
+			return
+		}
 		experts := []Vector{}
 		for seed := 1; seed <= 512; seed++ {
 			expert := make(Vector, MODEL_WIDTH)
@@ -639,7 +642,7 @@ func GraphTruth(prices []Quote, minYear, maxYear int) {
 	}
 	takensIterator(prices, 4, true, iterate)
 
-	rows := model.Rows()
+	rows := model.Rows() - 1
 	pca := PCA(model.Copy(), 2)
 
 	points := make([]CPoint, rows)
