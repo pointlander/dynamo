@@ -216,6 +216,8 @@ func (cp *CPoints) Plot(c draw.Canvas, plt *plot.Plot) {
 				c.SetColor(color.RGBA{255, 0, 0, 255})
 			case 2:
 				c.SetColor(color.RGBA{0, 0, 255, 255})
+			case 3:
+				c.SetColor(color.RGBA{0, 0, 0, 255})
 			}
 		}
 		c.Fill(p)
@@ -588,7 +590,93 @@ func (v *Vectorizer) Graph(prices []Quote, minYear, maxYear int) {
 	}
 }
 
-var vectorizer = flag.String("vectorizer", "all", "all/nmf/rnn/rnni")
+func GraphTruth(prices []Quote, minYear, maxYear int) {
+	iterate := func(year int, patterns [][][]float64) {
+		maxYear = year
+	}
+	takensIterator(prices, 4, false, iterate)
+
+	model := matrix.Zeros(maxYear-minYear+1, MODEL_WIDTH)
+	iterate = func(year int, patterns [][][]float64) {
+		fmt.Println(year)
+		experts := []Vector{}
+		for seed := 1; seed <= 512; seed++ {
+			expert := make(Vector, MODEL_WIDTH)
+			rand.Seed(int64(seed))
+			ff := &gobrain.FeedForward{}
+			ff.Init(NEURAL_WIDTH, NEURAL_MIDDLE, NEURAL_WIDTH)
+			ff.SetContexts(7, nil)
+			ff.Train(patterns, 1, 0.6, 0.4, true)
+			j := 0
+			for _, weights := range ff.InputWeights {
+				for _, weight := range weights {
+					expert[j] = weight
+					j++
+				}
+			}
+			for _, weights := range ff.OutputWeights {
+				for _, weight := range weights {
+					expert[j] = weight
+					j++
+				}
+			}
+			experts = append(experts, expert)
+		}
+		length := len(experts)
+		for i := 0; i < MODEL_WIDTH; i++ {
+			u := 0.0
+			for _, expert := range experts {
+				u += expert[i]
+			}
+			u /= float64(length)
+			v := 0.0
+			for _, expert := range experts {
+				x := expert[i] - u
+				v += x * x
+			}
+			model.Set(year-minYear, i, v/float64(length))
+		}
+	}
+	takensIterator(prices, 4, true, iterate)
+
+	rows := model.Rows()
+	pca := PCA(model.Copy(), 2)
+
+	points := make([]CPoint, rows)
+	for i := 0; i < rows; i++ {
+		points[i].X, points[i].Y, points[i].C = float64(minYear+i), pca.Get(i, 0), 3
+	}
+	p, err := plot.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p.Title.Text = "Market Truth"
+	p.X.Label.Text = "Time"
+	p.Y.Label.Text = "Truth"
+	p.Add(&CPoints{points, true})
+	if err := p.Save(2048, 2048, "market_truth.png"); err != nil {
+		log.Fatal(err)
+	}
+
+	points = make([]CPoint, rows)
+	for i := 0; i < rows; i++ {
+		points[i].X, points[i].Y, points[i].C = pca.Get(i, 0), pca.Get(i, 1), 3
+	}
+	p, err = plot.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p.Title.Text = "Market Truth Cluster"
+	p.X.Label.Text = "X"
+	p.Y.Label.Text = "Y"
+	p.Add(&CPoints{points, false})
+	if err := p.Save(2048, 2048, "market_truth_cluster.png"); err != nil {
+		log.Fatal(err)
+	}
+}
+
+var vectorizer = flag.String("vectorizer", "none", "all/none/nmf/rnn/rnni")
+var truth = flag.Bool("truth", false, "graph the market truth")
 
 func main() {
 	flag.Parse()
@@ -633,5 +721,9 @@ func main() {
 				break
 			}
 		}
+	}
+
+	if *truth {
+		GraphTruth(prices, minYear, maxYear)
 	}
 }
